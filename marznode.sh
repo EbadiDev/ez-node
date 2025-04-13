@@ -76,23 +76,7 @@ hys_architecture() {
 print_info "Installing necessary packages..."
 print_info "DON'T PANIC IF IT LOOKS STUCK!"
 sudo apt-get update
-sudo apt-get install curl socat git wget unzip make golang -y
-
-# Docker installation
-if ! command -v docker &> /dev/null; then
-    trap 'echo "Ctrl+C was pressed but the script will continue."' SIGINT
-    curl -fsSL https://get.docker.com | sh || { print_error "Something went wrong! Did you interrupt the Docker update? If so, no problem. Are you trying to install Docker on an IR server? Try setting DNS."; }
-    trap - SIGINT
-    clear
-fi
-
-print_info "Checking if Docker is installed..."
-if ! command -v docker &> /dev/null; then
-  print_error "Docker could not be found, please install Docker."
-  exit 1
-else
-  print_success "Docker installation found!"
-fi
+sudo apt-get install curl socat git wget unzip make golang python3.12-venv python3-pip -y
 
 # Folder name
 print_info "Set a name for node directory (leave blank for a random name - not recommended): "
@@ -173,7 +157,7 @@ fi
 
 print_success "Success! xray installed"
 
-# bulding sing-box
+# building sing-box
 cd /opt/marznode/$node_directory/sing-box
 wget -O config.json "https://raw.githubusercontent.com/mikeesierrah/ez-node/refs/heads/main/etc/sing-box.json"
 echo $sversion
@@ -210,9 +194,14 @@ print_info "Do you want to enable hysteria (y/n)"
 read -r answer
 hys_enable=$( [[ "$answer" =~ ^[Yy]$ ]] && echo "True" || echo "False" )
 
-# Defining env docker path
-ENV="/opt/marznode/$node_directory/.env"
-DOCKER="/opt/marznode/$node_directory/docker-compose.yml"
+# Clone marznode repository and set up Python environment
+print_info "Cloning marznode repository and setting up Python environment..."
+cd /opt/marznode/$node_directory
+git clone https://github.com/khodedawsh/marznode
+cd marznode
+
+# Defining env path - placing ENV inside marznode directory
+ENV="/opt/marznode/$node_directory/marznode/.env"
 
 # Setting up env
 cat << EOF > "$ENV"
@@ -248,42 +237,91 @@ EOF
 
 print_success ".env file has been created successfully."
 
-# Setting up docker-compose.yml
-cat << EOF > $DOCKER
-services:
-  marznode:
-    image: dawsh/marznode:latest
-    restart: always
-    network_mode: host
-    command: [ "sh", "-c", "sleep 10 && python3 marznode.py" ]
-    env_file: .env
-    volumes:
-      - /opt/marznode/$node_directory:/opt/marznode/$node_directory
-EOF
-print_success "docker-compose.yml has been created successfully."
+# Setup Python virtual environment
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
 
-#Setting up control script 
+# Create a script to run marznode
+cat << EOF > /opt/marznode/$node_directory/run_marznode.sh
+#!/bin/bash
+cd /opt/marznode/$node_directory/marznode
+source ../venv/bin/activate
+export \$(cat ./.env | xargs)
+python marznode.py
+EOF
+
+chmod +x /opt/marznode/$node_directory/run_marznode.sh
+
+# Create systemd service
+print_info "Creating systemd service..."
+cat << EOF > /etc/systemd/system/marznode-$node_directory.service
+[Unit]
+Description=Marznode Service ($node_directory)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/marznode/$node_directory
+ExecStart=/opt/marznode/$node_directory/run_marznode.sh
+Restart=always
+RestartSec=1
+LimitNOFILE=infinity
+
+# Logging configuration
+StandardOutput=append:/var/log/marznode-$node_directory.log
+StandardError=append:/var/log/marznode-$node_directory.error.log
+
+# Optional: log rotation to prevent huge log files
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+print_info "Enabling and starting the service..."
+systemctl daemon-reload
+systemctl enable marznode-$node_directory
+systemctl restart marznode-$node_directory
+
+print_info "Checking service status..."
+systemctl status marznode-$node_directory
+
+print_success "Marznode has been successfully set up and started!"
+print_success "Service name: marznode-$node_directory"
+print_success "You can check logs at:"
+print_success "  - /var/log/marznode-$node_directory.log"
+print_success "  - /var/log/marznode-$node_directory.error.log"
+
+# Setting up control script
 cat << 'EOF' > /usr/local/bin/marznode
 #!/bin/bash
 DEFAULT_DIR="/opt/marznode"
-DIR="$DEFAULT_DIR/${1:-}"
+NODE_NAME="${1:-}"
 COMMAND="$2"
 
-cd "$DIR" || { echo "Directory not found: $DIR"; echo "Usage: marznode <node-name> restart | start | stop"; exit 1; }
+if [ -z "$NODE_NAME" ] || [ -z "$COMMAND" ]; then
+  echo "Usage: marznode <node-name> restart | start | stop | status"
+  exit 1
+fi
+
+SERVICE_NAME="marznode-$NODE_NAME"
 
 case "$COMMAND" in
-    restart) docker compose restart -t 0 ;;
-    start) docker compose up -d ;;
-    stop) docker compose down -t 0 ;;
-    *) echo "Usage: marznode <node-name> restart | start | stop"; exit 1 ;;
+    restart) systemctl restart $SERVICE_NAME ;;
+    start) systemctl start $SERVICE_NAME ;;
+    stop) systemctl stop $SERVICE_NAME ;;
+    status) systemctl status $SERVICE_NAME ;;
+    *) echo "Usage: marznode <node-name> restart | start | stop | status"; exit 1 ;;
 esac
 EOF
 
 sudo chmod +x /usr/local/bin/marznode
 
 print_success "Script installed successfully at /usr/local/bin/marznode"
-
-cd "/opt/marznode/$node_directory" || { print_error "Something went wrong! Couldn't enter $node_directory directory"; exit 1; }
-docker compose up -d --remove-orphans
+print_success "You can control the service with: marznode $node_directory restart|start|stop|status"
 
 

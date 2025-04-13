@@ -1,9 +1,15 @@
-listen: 127.0.0.1:6291
+listen: :6291
 
 acme:
   domains:
-    - your.domain.net 
-  email: your@email.com
+    - mostafa.archcloud.ir
+  email: mostafa.archcloud.ir
+  ca: letsencrypt
+  disableHTTP: false
+  disableTLSALPN: false
+  altHTTPPort: 80
+  altTLSALPNPort: 443
+  dir: /etc/hysteria/amce/
 
 auth:
   type: password
