@@ -520,20 +520,20 @@ list_nodes() {
     fi
     
     print_info "Available Marznode instances:"
-    printf "\n"
+    echo ""
     
     for node in "${nodes[@]}"; do
         if systemctl is-active --quiet "marznode-$node"; then
-            status="${GREEN}[ACTIVE]${NC}"
+            echo -e "$(printf "%2d. %s " "$i" "$node")${GREEN}[ACTIVE]${NC}"
         else
-            status="${RED}[INACTIVE]${NC}"
+            echo -e "$(printf "%2d. %s " "$i" "$node")${RED}[INACTIVE]${NC}"
         fi
-        printf "%2d. %s %s\n" "$i" "$node" "$status"
         i=$((i+1))
     done
     
-    printf "\n"
-    printf "q. Quit\n\n"
+    echo ""
+    echo "q. Quit"
+    echo ""
     
     return 0
 }
@@ -546,35 +546,35 @@ show_node_menu() {
     
     clear
     print_info "Node: $node (Service: $service_name)"
-    printf "\n"
+    echo ""
     
     # Show current status
     if systemctl is-active --quiet "$service_name"; then
-        printf "${GREEN}● Status: Running${NC}\n"
+        echo -e "● Status: Running${NC}"
     else
-        printf "${RED}○ Status: Stopped${NC}\n"
+        echo -e "○ Status: Stopped${NC}"
     fi
     
     # Get port number if available
     if [ -f "$env_file" ]; then
         port=$(grep "SERVICE_PORT" "$env_file" | cut -d'=' -f2)
         if [ -n "$port" ]; then
-            printf "● Port: $port\n"
+            echo -e "● Port: $port${NC}"
         fi
     fi
     
-    printf "\n"
-    printf "1. Restart service\n"
-    printf "2. Stop service\n"
-    printf "3. Start service\n"
-    printf "4. View logs\n"
-    printf "5. Edit .env file\n"
-    printf "6. Edit hysteria config\n"
-    printf "7. Delete node\n"
-    printf "\n"
-    printf "b. Back to node list\n"
-    printf "q. Quit\n"
-    printf "\n"
+    echo ""
+    echo "1. Restart service"
+    echo "2. Stop service"
+    echo "3. Start service"
+    echo "4. View logs"
+    echo "5. Edit .env file"
+    echo "6. Edit hysteria config"
+    echo "7. Delete node"
+    echo ""
+    echo "b. Back to node list"
+    echo "q. Quit"
+    echo ""
     
     read -p "Select an option: " option
     
