@@ -78,26 +78,31 @@ print_info "DON'T PANIC IF IT LOOKS STUCK!"
 sudo apt-get update
 sudo apt-get install curl socat git wget unzip make golang -y
 
-# Check and install Python 3.12
-print_info "Checking Python version..."
-if ! command -v python3.12 &> /dev/null; then
-    print_info "Python 3.12 not found. Installing Python 3.12..."
+# Install Rye for Python environment management
+print_info "Installing Rye (Python environment manager)..."
+if ! command -v rye &> /dev/null; then
+    curl -sSf https://rye.astral.sh/get | bash
     
-    # Add deadsnakes PPA (common repository for Python versions)
-    sudo apt-get install software-properties-common -y
-    sudo add-apt-repository ppa:deadsnakes/ppa -y
-    sudo apt-get update
+    # Add Rye shims to PATH for this session and permanently
+    export PATH="$HOME/.rye/shims:$PATH"
     
-    # Install Python 3.12 and venv package
-    sudo apt-get install python3.12 python3.12-venv python3.12-dev -y
+    # Add to profile for future sessions
+    if ! grep -q 'source "$HOME/.rye/env"' ~/.profile; then
+        echo 'source "$HOME/.rye/env"' >> ~/.profile
+    fi
     
-    print_success "Python 3.12 installed successfully!"
+    # Add to bashrc as well for interactive shells
+    if ! grep -q 'source "$HOME/.rye/env"' ~/.bashrc; then
+        echo 'source "$HOME/.rye/env"' >> ~/.bashrc
+    fi
+    
+    print_success "Rye installed successfully!"
 else
-    print_success "Python 3.12 is already installed."
+    print_success "Rye is already installed."
 fi
 
-# Install Python 3.12 venv package
-sudo apt-get install python3.12-venv -y
+# Source the Rye env for this session
+source "$HOME/.rye/env"
 
 # Folder name
 print_info "Set a name for node directory (leave blank for a random name - not recommended): "
@@ -258,29 +263,43 @@ EOF
 
 print_success ".env file has been created successfully."
 
-# Setup Python virtual environment
-print_info "Creating Python 3.12 virtual environment..."
-python3.12 -m venv venv
+# Setup Python environment with Rye
+print_info "Setting up Python environment with Rye..."
 
-# Verify that venv was created successfully
-if [ ! -f "venv/bin/activate" ]; then
-    print_error "Failed to create virtual environment. Please check Python 3.12 installation."
-    exit 1
+# Initialize a new Rye project
+rye init --no-prompt
+
+# Pin to Python 3.12
+print_info "Pinning to Python 3.12..."
+rye pin 3.12
+
+# Add requirements from requirements.txt
+if [ -f "requirements.txt" ]; then
+    print_info "Adding dependencies from requirements.txt..."
+    while read -r requirement; do
+        # Skip empty lines and comments
+        if [[ -z "$requirement" || "$requirement" == \#* ]]; then
+            continue
+        fi
+        rye add "$requirement"
+    done < requirements.txt
 fi
 
-# Activate virtual environment and install dependencies
-print_info "Installing Python dependencies..."
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+# Ensure Rye has synchronized the environment
+rye sync
+
+print_success "Python environment set up with Rye successfully!"
 
 # Create a script to run marznode
 cat << EOF > /opt/marznode/$node_directory/run_marznode.sh
 #!/bin/bash
 cd /opt/marznode/$node_directory/marznode
-source /opt/marznode/$node_directory/marznode/venv/bin/activate
+# Source Rye environment
+source "\$HOME/.rye/env"
+# Export environment variables
 export \$(grep -v '^#' ./.env | xargs)
-python marznode.py
+# Run with Rye
+rye run python marznode.py
 EOF
 
 chmod +x /opt/marznode/$node_directory/run_marznode.sh
@@ -300,6 +319,8 @@ ExecStart=/opt/marznode/$node_directory/run_marznode.sh
 Restart=always
 RestartSec=1
 LimitNOFILE=infinity
+# Make sure HOME is set for the Rye environment
+Environment="HOME=$(eval echo ~$SUDO_USER)"
 
 # Logging configuration
 StandardOutput=append:/var/log/marznode-$node_directory.log
