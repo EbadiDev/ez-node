@@ -78,9 +78,10 @@ print_info "DON'T PANIC IF IT LOOKS STUCK!"
 sudo apt-get update
 sudo apt-get install curl socat git wget unzip make golang -y
 
-# Install Rye for Python environment management
-print_info "Installing Rye (Python environment manager)..."
+# Check if Rye is already installed
+print_info "Checking for Rye (Python environment manager)..."
 if ! command -v rye &> /dev/null; then
+    print_info "Rye not found. Installing Rye..."
     curl -sSf https://rye.astral.sh/get | bash
     
     # Add Rye shims to PATH for this session and permanently
@@ -98,11 +99,16 @@ if ! command -v rye &> /dev/null; then
     
     print_success "Rye installed successfully!"
 else
-    print_success "Rye is already installed."
+    print_success "Rye is already installed. Skipping installation."
 fi
 
 # Source the Rye env for this session
-source "$HOME/.rye/env"
+if [ -f "$HOME/.rye/env" ]; then
+    source "$HOME/.rye/env"
+else
+    print_error "Rye environment file not found. Please check Rye installation."
+    exit 1
+fi
 
 # Setting up shared core directory
 print_info "Setting up shared cores directory..."
