@@ -76,7 +76,28 @@ hys_architecture() {
 print_info "Installing necessary packages..."
 print_info "DON'T PANIC IF IT LOOKS STUCK!"
 sudo apt-get update
-sudo apt-get install curl socat git wget unzip make golang python3.12-venv python3-pip -y
+sudo apt-get install curl socat git wget unzip make golang -y
+
+# Check and install Python 3.12
+print_info "Checking Python version..."
+if ! command -v python3.12 &> /dev/null; then
+    print_info "Python 3.12 not found. Installing Python 3.12..."
+    
+    # Add deadsnakes PPA (common repository for Python versions)
+    sudo apt-get install software-properties-common -y
+    sudo add-apt-repository ppa:deadsnakes/ppa -y
+    sudo apt-get update
+    
+    # Install Python 3.12 and venv package
+    sudo apt-get install python3.12 python3.12-venv python3.12-dev -y
+    
+    print_success "Python 3.12 installed successfully!"
+else
+    print_success "Python 3.12 is already installed."
+fi
+
+# Install Python 3.12 venv package
+sudo apt-get install python3.12-venv -y
 
 # Folder name
 print_info "Set a name for node directory (leave blank for a random name - not recommended): "
@@ -238,16 +259,27 @@ EOF
 print_success ".env file has been created successfully."
 
 # Setup Python virtual environment
-python3 -m venv venv
+print_info "Creating Python 3.12 virtual environment..."
+python3.12 -m venv venv
+
+# Verify that venv was created successfully
+if [ ! -f "venv/bin/activate" ]; then
+    print_error "Failed to create virtual environment. Please check Python 3.12 installation."
+    exit 1
+fi
+
+# Activate virtual environment and install dependencies
+print_info "Installing Python dependencies..."
 source venv/bin/activate
-python -m pip install -r requirements.txt
+pip install --upgrade pip
+pip install -r requirements.txt
 
 # Create a script to run marznode
 cat << EOF > /opt/marznode/$node_directory/run_marznode.sh
 #!/bin/bash
 cd /opt/marznode/$node_directory/marznode
-source ../venv/bin/activate
-export \$(cat ./.env | xargs)
+source /opt/marznode/$node_directory/marznode/venv/bin/activate
+export \$(grep -v '^#' ./.env | xargs)
 python marznode.py
 EOF
 
@@ -263,7 +295,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/marznode/$node_directory
+WorkingDirectory=/opt/marznode/$node_directory/marznode
 ExecStart=/opt/marznode/$node_directory/run_marznode.sh
 Restart=always
 RestartSec=1
@@ -286,6 +318,7 @@ print_info "Enabling and starting the service..."
 systemctl daemon-reload
 systemctl enable marznode-$node_directory
 systemctl restart marznode-$node_directory
+sleep 2  # Give the service a moment to start
 
 print_info "Checking service status..."
 systemctl status marznode-$node_directory
