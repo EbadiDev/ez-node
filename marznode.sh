@@ -430,11 +430,32 @@ fi
 SERVICE_NAME="marznode-$NODE_NAME"
 
 case "$COMMAND" in
-    restart) systemctl restart $SERVICE_NAME ;;
-    start) systemctl start $SERVICE_NAME ;;
-    stop) systemctl stop $SERVICE_NAME ;;
-    status) systemctl status $SERVICE_NAME ;;
-    *) echo "Usage: marznode <node-name> restart | start | stop | status"; exit 1 ;;
+    restart) 
+        echo "Forcefully restarting $SERVICE_NAME..."
+        systemctl stop --force $SERVICE_NAME
+        sleep 1
+        systemctl reset-failed $SERVICE_NAME
+        systemctl start $SERVICE_NAME
+        ;;
+    start) 
+        systemctl start $SERVICE_NAME 
+        ;;
+    stop) 
+        echo "Forcefully stopping $SERVICE_NAME..."
+        systemctl stop --force $SERVICE_NAME
+        # Use kill as a more aggressive stop if needed
+        if systemctl is-active --quiet $SERVICE_NAME; then
+            echo "Service still running, using kill..."
+            systemctl kill $SERVICE_NAME
+        fi
+        ;;
+    status) 
+        systemctl status $SERVICE_NAME 
+        ;;
+    *) 
+        echo "Usage: marznode <node-name> restart | start | stop | status"
+        exit 1 
+        ;;
 esac
 EOF
 
