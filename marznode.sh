@@ -104,6 +104,13 @@ fi
 # Source the Rye env for this session
 source "$HOME/.rye/env"
 
+# Setting up shared core directory
+print_info "Setting up shared cores directory..."
+sudo mkdir -p /opt/marznode/cores
+sudo mkdir -p /opt/marznode/cores/xray
+sudo mkdir -p /opt/marznode/cores/sing-box
+sudo mkdir -p /opt/marznode/cores/hysteria
+
 # Folder name
 print_info "Set a name for node directory (leave blank for a random name - not recommended): "
 read -r node_directory
@@ -116,9 +123,6 @@ rm -rf "/opt/marznode/$node_directory" &> /dev/null
 
 # Setting path
 sudo mkdir -p /opt/marznode/$node_directory
-sudo mkdir -p /opt/marznode/$node_directory/xray
-sudo mkdir -p /opt/marznode/$node_directory/sing-box
-sudo mkdir -p /opt/marznode/$node_directory/hysteria
 
 # Port setup
 while true; do
@@ -141,71 +145,83 @@ done
 
 echo -e "$cert" | sudo tee /opt/marznode/$node_directory/client.pem > /dev/null
 
-# xray
-print_info "Which version of xray core do you want? (e.g., 1.8.24) (leave blank for latest): "
-read -r version
-xversion=${version:-latest}
+# Install cores if they don't exist
+if [ ! -f "/opt/marznode/cores/xray/xray" ]; then
+    # xray
+    print_info "Which version of xray core do you want? (e.g., 1.8.24) (leave blank for latest): "
+    read -r version
+    xversion=${version:-latest}
 
-# sing box
-print_info "Which version of sing-box core do you want? (e.g., 1.10.3) (leave blank for latest): "
-read -r version
-latest=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
-sversion=${version:-$latest}
+    # Fetching xray core and setting it up
+    arch=$(x_architecture)
+    cd "/opt/marznode/cores/xray"
 
-# hysteria
-print_info "Which version of hysteria core do you want? (e.g., 2.6.0) (leave blank for latest): "
-read -r version
-latest=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
-hversion=${version:-$latest}
-hversion=${hversion#app/v}
+    wget -O config.json "https://raw.githubusercontent.com/ebadidev/ez-node/refs/heads/main/etc/xray.json"
 
-# Fetching xray core and setting it up
-arch=$(x_architecture)
-cd "/opt/marznode/$node_directory/xray"
+    print_info "Fetching Xray core version $xversion..."
 
-wget -O config.json "https://raw.githubusercontent.com/mikeesierrah/ez-node/refs/heads/main/etc/xray.json"
+    if [[ $xversion == "latest" ]]; then
+      wget -O xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$arch.zip"
+    else
+      wget -O xray.zip "https://github.com/XTLS/Xray-core/releases/download/v$xversion/Xray-linux-$arch.zip"
+    fi
 
-print_info "Fetching Xray core version $xversion..."
-
-if [[ $xversion == "latest" ]]; then
-  wget -O xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$arch.zip"
+    if unzip xray.zip; then
+      rm xray.zip
+      chmod +x xray
+      print_success "Success! xray installed"
+    else
+      print_error "Failed to unzip xray.zip."
+      exit 1
+    fi
 else
-  wget -O xray.zip "https://github.com/XTLS/Xray-core/releases/download/v$xversion/Xray-linux-$arch.zip"
+    print_info "Xray core already installed in shared directory."
 fi
 
-if unzip xray.zip; then
-  rm xray.zip
-  mv -v xray "$node_directory-core"
+if [ ! -f "/opt/marznode/cores/sing-box/sing-box" ]; then
+    # sing box
+    print_info "Which version of sing-box core do you want? (e.g., 1.10.3) (leave blank for latest): "
+    read -r version
+    latest=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
+    sversion=${version:-$latest}
+
+    # Building sing-box
+    cd /opt/marznode/cores/sing-box
+    wget -O config.json "https://raw.githubusercontent.com/ebadidev/ez-node/refs/heads/main/etc/sing-box.json"
+    echo $sversion
+    wget -O sing.zip "https://github.com/SagerNet/sing-box/archive/refs/tags/v${sversion#v}.zip"
+    unzip sing.zip
+    cd ./sing-box-${sversion#v}
+    go build -v -trimpath -ldflags "-X github.com/sagernet/sing-box/constant.Version=${sversion#v} -s -w -buildid=" -tags with_gvisor,with_dhcp,with_wireguard,with_reality_server,with_clash_api,with_quic,with_utls,with_ech,with_v2ray_api,with_grpc ./cmd/sing-box
+    chmod +x ./sing-box
+    mv sing-box /opt/marznode/cores/sing-box/
+    cd ..
+    rm sing.zip
+    rm -rf ./sing-box-${sversion#v}
+
+    print_success "Success! sing-box installed"
 else
-  print_error "Failed to unzip xray.zip."
-  exit 1
+    print_info "Sing-box core already installed in shared directory."
 fi
 
-print_success "Success! xray installed"
+if [ ! -f "/opt/marznode/cores/hysteria/hysteria" ]; then
+    # hysteria
+    print_info "Which version of hysteria core do you want? (e.g., 2.6.0) (leave blank for latest): "
+    read -r version
+    latest=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
+    hversion=${version:-$latest}
+    hversion=${hversion#app/v}
 
-# building sing-box
-cd /opt/marznode/$node_directory/sing-box
-wget -O config.json "https://raw.githubusercontent.com/mikeesierrah/ez-node/refs/heads/main/etc/sing-box.json"
-echo $sversion
-wget -O sing.zip "https://github.com/SagerNet/sing-box/archive/refs/tags/v${sversion#v}.zip"
-unzip sing.zip
-cd ./sing-box-${sversion#v}
-# TAGS="with_gvisor,with_quic,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_acme,with_clash_api,with_v2ray_api,with_grpc" make
-go build -v -trimpath -ldflags "-X github.com/sagernet/sing-box/constant.Version=${sversion#v} -s -w -buildid=" -tags with_gvisor,with_dhcp,with_wireguard,with_reality_server,with_clash_api,with_quic,with_utls,with_ech,with_v2ray_api,with_grpc ./cmd/sing-box
-chmod +x ./sing-box
-mv sing-box /opt/marznode/$node_directory/sing-box/$node_directory-box
-cd ..
-rm sing.zip
-rm -rf ./sing-box-${sversion#v}
+    # Fetching hysteria core and setting it up
+    cd /opt/marznode/cores/hysteria
+    arch=$(hys_architecture)
+    wget -O hysteria "https://github.com/apernet/hysteria/releases/download/app/v$hversion/hysteria-linux-$arch"
+    chmod +x ./hysteria
 
-print_success "Success! sing-box installed"
-
-# Fetching hysteria core and setting it up
-cd /opt/marznode/$node_directory/hysteria
-wget -O config.yaml "https://raw.githubusercontent.com/mikeesierrah/ez-node/refs/heads/main/etc/hysteria.yaml"
-arch=$(hys_architecture)
-wget -O $node_directory-teria "https://github.com/apernet/hysteria/releases/download/app/v$hversion/hysteria-linux-$arch"
-chmod +x ./$node_directory-teria
+    print_success "Success! hysteria installed"
+else
+    print_info "Hysteria core already installed in shared directory."
+fi
 
 # Get enable status for each component
 print_info "Do you want to enable xray (y/n)"
@@ -220,6 +236,55 @@ print_info "Do you want to enable hysteria (y/n)"
 read -r answer
 hys_enable=$( [[ "$answer" =~ ^[Yy]$ ]] && echo "True" || echo "False" )
 
+# Configure Hysteria only if enabled
+hysteria_domain="example.com"
+hysteria_email="info@example.com"
+hysteria_port="6291"
+
+if [ "$hys_enable" = "True" ]; then
+    # Hysteria domain setup
+    print_info "Enter the domain name for Hysteria (e.g., example.com): "
+    read -r hysteria_domain
+    hysteria_domain=${hysteria_domain:-example.com}
+
+    # Auto-fill email with info@domain
+    hysteria_email="info@$hysteria_domain"
+    
+    print_info "Enter the port for Hysteria (default 6291): "
+    read -r hysteria_port
+    hysteria_port=${hysteria_port:-6291}
+    
+    # Configure hysteria.yaml with domain and port
+    cat << EOF > /opt/marznode/cores/hysteria/config.yaml
+listen: :$hysteria_port
+
+acme:
+  domains:
+    - $hysteria_domain
+  email: $hysteria_email
+  ca: letsencrypt
+  disableHTTP: false
+  disableTLSALPN: false
+  altHTTPPort: 80
+  altTLSALPNPort: 443
+  dir: /etc/hysteria/acme/
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.speedtest.net
+    rewriteHost: true
+
+resolver:
+  type: udp
+  udp:
+    addr: 1.1.1.2:53
+    timeout: 10s
+EOF
+
+    print_success "Hysteria configuration created with domain: $hysteria_domain and port: $hysteria_port"
+fi
+
 # Clone marznode repository and set up Python environment
 print_info "Cloning marznode repository and setting up Python environment..."
 cd /opt/marznode/$node_directory
@@ -229,27 +294,27 @@ cd marznode
 # Defining env path - placing ENV inside marznode directory
 ENV="/opt/marznode/$node_directory/marznode/.env"
 
-# Setting up env
+# Setting up env with shared core paths
 cat << EOF > "$ENV"
 SERVICE_ADDRESS=0.0.0.0
 SERVICE_PORT=$service
 #INSECURE=False
 
 XRAY_ENABLED=$x_enable
-XRAY_EXECUTABLE_PATH=/opt/marznode/$node_directory/xray/$node_directory-core
-XRAY_ASSETS_PATH=/opt/marznode/$node_directory/xray
-XRAY_CONFIG_PATH=/opt/marznode/$node_directory/xray/config.json
+XRAY_EXECUTABLE_PATH=/opt/marznode/cores/xray/xray
+XRAY_ASSETS_PATH=/opt/marznode/cores/xray
+XRAY_CONFIG_PATH=/opt/marznode/cores/xray/config.json
 #XRAY_VLESS_REALITY_FLOW=xtls-rprx-vision
 #XRAY_RESTART_ON_FAILURE=True
 #XRAY_RESTART_ON_FAILURE_INTERVAL=5
 
 HYSTERIA_ENABLED=$hys_enable
-HYSTERIA_EXECUTABLE_PATH=/opt/marznode/$node_directory/hysteria/$node_directory-teria
-HYSTERIA_CONFIG_PATH=/opt/marznode/$node_directory/hysteria/config.yaml
+HYSTERIA_EXECUTABLE_PATH=/opt/marznode/cores/hysteria/hysteria
+HYSTERIA_CONFIG_PATH=/opt/marznode/cores/hysteria/config.yaml
 
 SING_BOX_ENABLED=$sing_enable
-SING_BOX_EXECUTABLE_PATH=/opt/marznode/$node_directory/sing-box/$node_directory-box
-SING_BOX_CONFIG_PATH=/opt/marznode/$node_directory/sing-box/config.json
+SING_BOX_EXECUTABLE_PATH=/opt/marznode/cores/sing-box/sing-box
+SING_BOX_CONFIG_PATH=/opt/marznode/cores/sing-box/config.json
 #SING_BOX_RESTART_ON_FAILURE=True
 #SING_BOX_RESTART_ON_FAILURE_INTERVAL=5
 

@@ -2,8 +2,8 @@ listen: :6291
 
 acme:
   domains:
-    - mostafa.archcloud.ir
-  email: mostafa.archcloud.ir
+    - example.com
+  email: example@example.com
   ca: letsencrypt
   disableHTTP: false
   disableTLSALPN: false
@@ -11,9 +11,6 @@ acme:
   altTLSALPNPort: 443
   dir: /etc/hysteria/amce/
 
-auth:
-  type: password
-  password: password
 
 masquerade:
   type: proxy
