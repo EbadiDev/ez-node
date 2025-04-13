@@ -294,14 +294,17 @@ fi
 # Clone marznode repository and set up Python environment
 print_info "Cloning marznode repository and setting up Python environment..."
 cd /opt/marznode/$node_directory
-git clone https://github.com/khodedawsh/marznode
-cd marznode
 
-# Defining env path - placing ENV inside marznode directory
-ENV="/opt/marznode/$node_directory/marznode/.env"
+# Clone to a node-specific directory to avoid any potential sharing issues
+git clone https://github.com/khodedawsh/marznode marznode-$node_directory
+cd marznode-$node_directory
+
+# Defining env path - placing ENV inside the node-specific marznode directory
+ENV="/opt/marznode/$node_directory/marznode-$node_directory/.env"
 
 # Setting up env with shared core paths
 cat << EOF > "$ENV"
+# Configuration for node: $node_directory (to help identify this specific node's config)
 SERVICE_ADDRESS=0.0.0.0
 SERVICE_PORT=$service
 #INSECURE=False
@@ -332,13 +335,13 @@ SSL_CLIENT_CERT_FILE=/opt/marznode/$node_directory/client.pem
 #AUTH_GENERATION_ALGORITHM=xxh128
 EOF
 
-print_success ".env file has been created successfully."
+print_success ".env file has been created at $ENV"
 
 # Setup Python environment with Rye
-print_info "Setting up Python environment with Rye..."
+print_info "Setting up Python environment with Rye for node $node_directory..."
 
-# Initialize a new Rye project
-rye init --no-prompt
+# Initialize a new Rye project with node-specific name
+rye init --name marznode-$node_directory --no-prompt
 
 # Pin to Python 3.12
 print_info "Pinning to Python 3.12..."
@@ -361,22 +364,25 @@ rye sync
 
 print_success "Python environment set up with Rye successfully!"
 
-# Create a script to run marznode
+# Create a script to run marznode with node-specific paths
 cat << EOF > /opt/marznode/$node_directory/run_marznode.sh
 #!/bin/bash
-cd /opt/marznode/$node_directory/marznode
+# Run script for node: $node_directory
+cd /opt/marznode/$node_directory/marznode-$node_directory
 # Source Rye environment
 source "\$HOME/.rye/env"
-# Export environment variables
+# Export environment variables from THIS node's env file
 export \$(grep -v '^#' ./.env | xargs)
+# Display which node is starting (for verification)
+echo "Starting marznode for node: $node_directory on port: $service"
 # Run with Rye
 rye run python marznode.py
 EOF
 
 chmod +x /opt/marznode/$node_directory/run_marznode.sh
 
-# Create systemd service
-print_info "Creating systemd service..."
+# Create systemd service with node-specific configuration
+print_info "Creating systemd service for node $node_directory..."
 cat << EOF > /etc/systemd/system/marznode-$node_directory.service
 [Unit]
 Description=Marznode Service ($node_directory)
@@ -385,7 +391,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/marznode/$node_directory/marznode
+WorkingDirectory=/opt/marznode/$node_directory/marznode-$node_directory
 ExecStart=/opt/marznode/$node_directory/run_marznode.sh
 Restart=always
 RestartSec=1
