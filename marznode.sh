@@ -430,68 +430,447 @@ print_success "  - /var/log/marznode-$node_directory.error.log"
 # Setting up control script
 cat << 'EOF' > /usr/local/bin/marznode
 #!/bin/bash
+
+# Color variables
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Function to print error message
+print_error() {
+  echo -e "${RED}$1${NC}" >&2
+}
+
+# Function to print success message
+print_success() {
+  echo -e "${GREEN}$1${NC}"
+}
+
+# Function to print info message
+print_info() {
+  echo -e "${CYAN}$1${NC}"
+}
+
 DEFAULT_DIR="/opt/marznode"
 NODE_NAME="${1:-}"
-COMMAND="$2"
+COMMAND="${2:-}"
 
-if [ -z "$NODE_NAME" ] || [ -z "$COMMAND" ]; then
-  echo "Usage: marznode <node-name> restart | start | stop | status"
-  exit 1
+# Interactive menu functions
+list_nodes() {
+    local nodes=()
+    local i=1
+    
+    # Check if the directory exists
+    if [ ! -d "$DEFAULT_DIR" ]; then
+        print_error "No nodes found. Directory $DEFAULT_DIR does not exist."
+        exit 1
+    fi
+    
+    # Find all service files for marznode
+    for dir in "$DEFAULT_DIR"/*; do
+        if [ -d "$dir" ] && [ "$(basename "$dir")" != "cores" ]; then
+            nodes+=("$(basename "$dir")")
+        fi
+    done
+    
+    # Display node list
+    if [ ${#nodes[@]} -eq 0 ]; then
+        print_error "No nodes found in $DEFAULT_DIR"
+        exit 1
+    fi
+    
+    print_info "Available Marznode instances:"
+    printf "\n"
+    
+    for node in "${nodes[@]}"; do
+        if systemctl is-active --quiet "marznode-$node"; then
+            status="${GREEN}[ACTIVE]${NC}"
+        else
+            status="${RED}[INACTIVE]${NC}"
+        fi
+        printf "%2d. %s %s\n" "$i" "$node" "$status"
+        i=$((i+1))
+    done
+    
+    printf "\n"
+    printf "q. Quit\n\n"
+    
+    return 0
+}
+
+show_node_menu() {
+    local node=$1
+    local service_name="marznode-$node"
+    local env_file="/opt/marznode/$node/marznode-$node/.env"
+    local hysteria_config="/opt/marznode/cores/hysteria/config.yaml"
+    
+    clear
+    print_info "Node: $node (Service: $service_name)"
+    printf "\n"
+    
+    # Show current status
+    if systemctl is-active --quiet "$service_name"; then
+        printf "${GREEN}● Status: Running${NC}\n"
+    else
+        printf "${RED}○ Status: Stopped${NC}\n"
+    fi
+    
+    # Get port number if available
+    if [ -f "$env_file" ]; then
+        port=$(grep "SERVICE_PORT" "$env_file" | cut -d'=' -f2)
+        if [ -n "$port" ]; then
+            printf "● Port: $port\n"
+        fi
+    fi
+    
+    printf "\n"
+    printf "1. Restart service\n"
+    printf "2. Stop service\n"
+    printf "3. Start service\n"
+    printf "4. View logs\n"
+    printf "5. Edit .env file\n"
+    printf "6. Edit hysteria config\n"
+    printf "7. Delete node\n"
+    printf "\n"
+    printf "b. Back to node list\n"
+    printf "q. Quit\n"
+    printf "\n"
+    
+    read -p "Select an option: " option
+    
+    case $option in
+        1)
+            restart_node "$node"
+            ;;
+        2)
+            stop_node "$node"
+            ;;
+        3)
+            start_node "$node"
+            ;;
+        4)
+            view_logs "$node"
+            ;;
+        5)
+            edit_env "$node"
+            ;;
+        6)
+            edit_hysteria_config
+            ;;
+        7)
+            delete_node "$node"
+            ;;
+        b|B)
+            return 1  # Back to main menu
+            ;;
+        q|Q)
+            exit 0
+            ;;
+        *)
+            print_error "Invalid option"
+            sleep 1
+            ;;
+    esac
+    
+    return 0  # Stay in this menu
+}
+
+restart_node() {
+    local node=$1
+    local service_name="marznode-$node"
+    
+    print_info "Restarting $service_name..."
+    
+    # First try a normal stop
+    systemctl stop $service_name
+    
+    # Wait for up to 1 second for graceful shutdown
+    sleep 1
+    
+    # Only use force if needed
+    if systemctl is-active --quiet $service_name; then
+        print_info "Service still running, using force stop..."
+        systemctl stop --force $service_name
+        sleep 1
+    fi
+    
+    systemctl reset-failed $service_name 2>/dev/null
+    systemctl start $service_name
+    
+    if systemctl is-active --quiet $service_name; then
+        print_success "Service restarted successfully!"
+    else
+        print_error "Failed to restart service."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+stop_node() {
+    local node=$1
+    local service_name="marznode-$node"
+    
+    print_info "Stopping $service_name..."
+    
+    # First try a normal stop
+    systemctl stop $service_name
+    
+    # Wait for up to 1 second for graceful shutdown
+    sleep 1
+    
+    # Check if service stopped
+    if ! systemctl is-active --quiet $service_name; then
+        print_success "Service stopped successfully."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    # Use force if needed after waiting
+    print_info "Service still running, using force stop..."
+    systemctl stop --force $service_name
+    sleep 1
+    
+    # As a last resort, use kill
+    if systemctl is-active --quiet $service_name; then
+        print_info "WARNING: Service still running, using kill command..."
+        systemctl kill $service_name
+    fi
+    
+    if ! systemctl is-active --quiet $service_name; then
+        print_success "Service stopped successfully!"
+    else
+        print_error "Failed to stop service."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+start_node() {
+    local node=$1
+    local service_name="marznode-$node"
+    
+    print_info "Starting $service_name..."
+    systemctl start $service_name
+    
+    if systemctl is-active --quiet $service_name; then
+        print_success "Service started successfully!"
+    else
+        print_error "Failed to start service."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+view_logs() {
+    local node=$1
+    local log_file="/var/log/marznode-$node.log"
+    local error_log="/var/log/marznode-$node.error.log"
+    
+    if [ -f "$log_file" ]; then
+        print_info "Viewing logs for $node (press q to exit):"
+        sleep 1
+        less -R "$log_file"
+    else
+        print_error "Log file not found: $log_file"
+        read -p "Press Enter to continue..."
+    fi
+}
+
+edit_env() {
+    local node=$1
+    local env_file="/opt/marznode/$node/marznode-$node/.env"
+    
+    if [ -f "$env_file" ]; then
+        ${EDITOR:-vim} "$env_file"
+    else
+        print_error "Env file not found: $env_file"
+        read -p "Press Enter to continue..."
+    fi
+}
+
+edit_hysteria_config() {
+    local config_file="/opt/marznode/cores/hysteria/config.yaml"
+    
+    if [ -f "$config_file" ]; then
+        ${EDITOR:-vim} "$config_file"
+    else
+        print_error "Hysteria config file not found: $config_file"
+        read -p "Press Enter to continue..."
+    fi
+}
+
+delete_node() {
+    local node=$1
+    local service_name="marznode-$node"
+    local node_dir="/opt/marznode/$node"
+    
+    read -p "WARNING: Are you sure you want to delete $node? This cannot be undone! (y/N): " confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        print_info "Deletion cancelled."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    # Stop the service
+    if systemctl is-active --quiet "$service_name"; then
+        print_info "Stopping service..."
+        systemctl stop --force "$service_name"
+        sleep 1
+    fi
+    
+    # Disable the service
+    if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
+        print_info "Disabling service..."
+        systemctl disable "$service_name"
+    fi
+    
+    # Remove the service file
+    if [ -f "/etc/systemd/system/$service_name.service" ]; then
+        print_info "Removing service file..."
+        rm -f "/etc/systemd/system/$service_name.service"
+        systemctl daemon-reload
+    fi
+    
+    # Remove log files
+    print_info "Removing log files..."
+    rm -f "/var/log/marznode-$node.log" "/var/log/marznode-$node.error.log"
+    
+    # Remove node directory
+    if [ -d "$node_dir" ]; then
+        print_info "Removing node directory..."
+        rm -rf "$node_dir"
+    fi
+    
+    print_success "Node $node has been deleted."
+    read -p "Press Enter to continue..."
+    
+    return 1  # Return to main menu
+}
+
+interactive_mode() {
+    local stay_in_menu=true
+    
+    while $stay_in_menu; do
+        clear
+        list_nodes
+        
+        read -p "Select a node (or q to quit): " choice
+        
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            # Check if this is a valid node number
+            local nodes=()
+            for dir in "$DEFAULT_DIR"/*; do
+                if [ -d "$dir" ] && [ "$(basename "$dir")" != "cores" ]; then
+                    nodes+=("$(basename "$dir")")
+                fi
+            done
+            
+            if [ "$choice" -ge 1 ] && [ "$choice" -le "${#nodes[@]}" ]; then
+                local selected_node="${nodes[$((choice-1))]}"
+                local stay_in_node_menu=true
+                
+                while $stay_in_node_menu; do
+                    if ! show_node_menu "$selected_node"; then
+                        stay_in_node_menu=false
+                    fi
+                done
+            else
+                print_error "Invalid option"
+                sleep 1
+            fi
+        elif [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            stay_in_menu=false
+        else
+            print_error "Invalid option"
+            sleep 1
+        fi
+    done
+}
+
+# Command mode functions
+cmd_restart() {
+    local node=$1
+    local service_name="marznode-$node"
+    
+    echo "Restarting $service_name..."
+    # First try a normal stop
+    systemctl stop $service_name
+    
+    # Wait for up to 1 second for graceful shutdown
+    sleep 1
+    
+    # Only use force if needed
+    if systemctl is-active --quiet $service_name; then
+        echo "Service still running, using force stop..."
+        systemctl stop --force $service_name
+        sleep 1
+    fi
+    
+    systemctl reset-failed $service_name 2>/dev/null
+    systemctl start $service_name
+}
+
+cmd_stop() {
+    local node=$1
+    local service_name="marznode-$node"
+    
+    echo "Stopping $service_name..."
+    # First try a normal stop
+    systemctl stop $service_name
+    
+    # Wait for up to 1 second for graceful shutdown
+    sleep 1
+    
+    # Check if service stopped
+    if ! systemctl is-active --quiet $service_name; then
+        echo "Service stopped successfully."
+        exit 0
+    fi
+    
+    # Use force if needed after waiting
+    echo "Service still running, using force stop..."
+    systemctl stop --force $service_name
+    sleep 1
+    
+    # As a last resort, use kill
+    if systemctl is-active --quiet $service_name; then
+        echo "WARNING: Service still running, using kill command..."
+        systemctl kill $service_name
+    fi
+}
+
+# Main execution logic
+if [ -z "$NODE_NAME" ]; then
+    # If no arguments, run in interactive mode
+    interactive_mode
+    exit 0
 fi
 
+# Direct command mode
 SERVICE_NAME="marznode-$NODE_NAME"
+
+if [ -z "$COMMAND" ]; then
+    echo "Usage: marznode <node-name> restart | start | stop | status"
+    exit 1
+fi
 
 case "$COMMAND" in
     restart) 
-        echo "Restarting $SERVICE_NAME..."
-        # First try a normal stop
-        systemctl stop $SERVICE_NAME
-        
-        # Wait for up to 1 second for graceful shutdown
-        sleep 1
-        
-        # Only use force if needed
-        if systemctl is-active --quiet $SERVICE_NAME; then
-            echo "Service still running, using force stop..."
-            systemctl stop --force $SERVICE_NAME
-            sleep 1
-        fi
-        
-        systemctl reset-failed $SERVICE_NAME 2>/dev/null
-        systemctl start $SERVICE_NAME
+        cmd_restart "$NODE_NAME"
         ;;
     start) 
         systemctl start $SERVICE_NAME 
         ;;
     stop) 
-        echo "Stopping $SERVICE_NAME..."
-        # First try a normal stop
-        systemctl stop $SERVICE_NAME
-        
-        # Wait for up to 1 second for graceful shutdown
-        sleep 1
-        
-        # Check if service stopped
-        if ! systemctl is-active --quiet $SERVICE_NAME; then
-            echo "Service stopped successfully."
-            exit 0
-        fi
-        
-        # Use force if needed after waiting
-        echo "Service still running, using force stop..."
-        systemctl stop --force $SERVICE_NAME
-        sleep 1
-        
-        # As a last resort, use kill
-        if systemctl is-active --quiet $SERVICE_NAME; then
-            echo "WARNING: Service still running, using kill command..."
-            systemctl kill $SERVICE_NAME
-        fi
+        cmd_stop "$NODE_NAME"
         ;;
     status) 
         systemctl status $SERVICE_NAME 
         ;;
-    *) 
+    *)
         echo "Usage: marznode <node-name> restart | start | stop | status"
         exit 1 
         ;;
