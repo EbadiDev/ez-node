@@ -80,7 +80,7 @@ sudo apt-get install curl socat git wget unzip make golang -y
 
 # Check if Rye is already installed
 print_info "Checking for Rye (Python environment manager)..."
-if ! command -v rye &> /dev/null; then
+if [ ! -f "$HOME/.rye/shims/rye" ]; then
     print_info "Rye not found. Installing Rye..."
     curl -sSf https://rye.astral.sh/get | bash
     
@@ -110,8 +110,8 @@ else
     exit 1
 fi
 
-# Setting up shared core directory
-print_info "Setting up shared cores directory..."
+# Setting up shared core directory for templates (not for direct use)
+print_info "Setting up cores directory..."
 sudo mkdir -p /opt/marznode/cores
 sudo mkdir -p /opt/marznode/cores/xray
 sudo mkdir -p /opt/marznode/cores/sing-box
@@ -129,6 +129,9 @@ rm -rf "/opt/marznode/$node_directory" &> /dev/null
 
 # Setting path
 sudo mkdir -p /opt/marznode/$node_directory
+sudo mkdir -p /opt/marznode/$node_directory/xray
+sudo mkdir -p /opt/marznode/$node_directory/sing-box
+sudo mkdir -p /opt/marznode/$node_directory/hysteria
 
 # Port setup
 while true; do
@@ -151,7 +154,7 @@ done
 
 echo -e "$cert" | sudo tee /opt/marznode/$node_directory/client.pem > /dev/null
 
-# Install cores if they don't exist
+# Install cores if they don't exist in the shared template directory
 if [ ! -f "/opt/marznode/cores/xray/xray" ]; then
     # xray
     print_info "Which version of xray core do you want? (e.g., 1.8.24) (leave blank for latest): "
@@ -181,7 +184,7 @@ if [ ! -f "/opt/marznode/cores/xray/xray" ]; then
       exit 1
     fi
 else
-    print_info "Xray core already installed in shared directory."
+    print_info "Xray core template already exists in shared directory."
 fi
 
 if [ ! -f "/opt/marznode/cores/sing-box/sing-box" ]; then
@@ -207,7 +210,7 @@ if [ ! -f "/opt/marznode/cores/sing-box/sing-box" ]; then
 
     print_success "Success! sing-box installed"
 else
-    print_info "Sing-box core already installed in shared directory."
+    print_info "Sing-box core template already exists in shared directory."
 fi
 
 if [ ! -f "/opt/marznode/cores/hysteria/hysteria" ]; then
@@ -226,7 +229,42 @@ if [ ! -f "/opt/marznode/cores/hysteria/hysteria" ]; then
 
     print_success "Success! hysteria installed"
 else
-    print_info "Hysteria core already installed in shared directory."
+    print_info "Hysteria core template already exists in shared directory."
+fi
+
+# Now copy the cores from the template directory to this node's directory
+print_info "Copying cores to node directory..."
+
+# Copy xray
+if [ -f "/opt/marznode/cores/xray/xray" ]; then
+    cp -f /opt/marznode/cores/xray/xray /opt/marznode/$node_directory/xray/
+    cp -f /opt/marznode/cores/xray/config.json /opt/marznode/$node_directory/xray/
+    chmod +x /opt/marznode/$node_directory/xray/xray
+    print_success "Xray core copied to node directory"
+else
+    print_error "Xray core not found in template directory"
+    exit 1
+fi
+
+# Copy sing-box
+if [ -f "/opt/marznode/cores/sing-box/sing-box" ]; then
+    cp -f /opt/marznode/cores/sing-box/sing-box /opt/marznode/$node_directory/sing-box/
+    cp -f /opt/marznode/cores/sing-box/config.json /opt/marznode/$node_directory/sing-box/
+    chmod +x /opt/marznode/$node_directory/sing-box/sing-box
+    print_success "Sing-box core copied to node directory"
+else
+    print_error "Sing-box core not found in template directory"
+    exit 1
+fi
+
+# Copy hysteria
+if [ -f "/opt/marznode/cores/hysteria/hysteria" ]; then
+    cp -f /opt/marznode/cores/hysteria/hysteria /opt/marznode/$node_directory/hysteria/
+    chmod +x /opt/marznode/$node_directory/hysteria/hysteria
+    print_success "Hysteria core copied to node directory"
+else
+    print_error "Hysteria core not found in template directory"
+    exit 1
 fi
 
 # Get enable status for each component
@@ -260,8 +298,8 @@ if [ "$hys_enable" = "True" ]; then
     read -r hysteria_port
     hysteria_port=${hysteria_port:-6291}
     
-    # Configure hysteria.yaml with domain and port
-    cat << EOF > /opt/marznode/cores/hysteria/config.yaml
+    # Configure hysteria.yaml with domain and port in the node's directory
+    cat << EOF > /opt/marznode/$node_directory/hysteria/config.yaml
 listen: :$hysteria_port
 
 acme:
@@ -273,7 +311,7 @@ acme:
   disableTLSALPN: false
   altHTTPPort: 80
   altTLSALPNPort: 443
-  dir: /etc/hysteria/acme/
+  dir: /opt/marznode/$node_directory/hysteria/acme/
 
 masquerade:
   type: proxy
@@ -310,20 +348,20 @@ SERVICE_PORT=$service
 #INSECURE=False
 
 XRAY_ENABLED=$x_enable
-XRAY_EXECUTABLE_PATH=/opt/marznode/cores/xray/xray
-XRAY_ASSETS_PATH=/opt/marznode/cores/xray
-XRAY_CONFIG_PATH=/opt/marznode/cores/xray/config.json
+XRAY_EXECUTABLE_PATH=/opt/marznode/$node_directory/xray/xray
+XRAY_ASSETS_PATH=/opt/marznode/$node_directory/xray
+XRAY_CONFIG_PATH=/opt/marznode/$node_directory/xray/config.json
 #XRAY_VLESS_REALITY_FLOW=xtls-rprx-vision
 #XRAY_RESTART_ON_FAILURE=True
 #XRAY_RESTART_ON_FAILURE_INTERVAL=5
 
 HYSTERIA_ENABLED=$hys_enable
-HYSTERIA_EXECUTABLE_PATH=/opt/marznode/cores/hysteria/hysteria
-HYSTERIA_CONFIG_PATH=/opt/marznode/cores/hysteria/config.yaml
+HYSTERIA_EXECUTABLE_PATH=/opt/marznode/$node_directory/hysteria/hysteria
+HYSTERIA_CONFIG_PATH=/opt/marznode/$node_directory/hysteria/config.yaml
 
 SING_BOX_ENABLED=$sing_enable
-SING_BOX_EXECUTABLE_PATH=/opt/marznode/cores/sing-box/sing-box
-SING_BOX_CONFIG_PATH=/opt/marznode/cores/sing-box/config.json
+SING_BOX_EXECUTABLE_PATH=/opt/marznode/$node_directory/sing-box/sing-box
+SING_BOX_CONFIG_PATH=/opt/marznode/$node_directory/sing-box/config.json
 #SING_BOX_RESTART_ON_FAILURE=True
 #SING_BOX_RESTART_ON_FAILURE_INTERVAL=5
 
@@ -504,7 +542,7 @@ show_node_menu() {
     local node=$1
     local service_name="marznode-$node"
     local env_file="/opt/marznode/$node/marznode-$node/.env"
-    local hysteria_config="/opt/marznode/cores/hysteria/config.yaml"
+    local hysteria_config="/opt/marznode/$node/hysteria/config.yaml"
     
     clear
     print_info "Node: $node (Service: $service_name)"
@@ -557,7 +595,7 @@ show_node_menu() {
             edit_env "$node"
             ;;
         6)
-            edit_hysteria_config
+            edit_hysteria_config "$node"
             ;;
         7)
             delete_node "$node"
@@ -691,7 +729,8 @@ edit_env() {
 }
 
 edit_hysteria_config() {
-    local config_file="/opt/marznode/cores/hysteria/config.yaml"
+    local node=$1
+    local config_file="/opt/marznode/$node/hysteria/config.yaml"
     
     if [ -f "$config_file" ]; then
         ${EDITOR:-vim} "$config_file"
