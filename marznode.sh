@@ -437,21 +437,48 @@ SERVICE_NAME="marznode-$NODE_NAME"
 
 case "$COMMAND" in
     restart) 
-        echo "Forcefully restarting $SERVICE_NAME..."
-        systemctl stop --force $SERVICE_NAME
+        echo "Restarting $SERVICE_NAME..."
+        # First try a normal stop
+        systemctl stop $SERVICE_NAME
+        
+        # Wait for up to 1 second for graceful shutdown
         sleep 1
-        systemctl reset-failed $SERVICE_NAME
+        
+        # Only use force if needed
+        if systemctl is-active --quiet $SERVICE_NAME; then
+            echo "Service still running, using force stop..."
+            systemctl stop --force $SERVICE_NAME
+            sleep 1
+        fi
+        
+        systemctl reset-failed $SERVICE_NAME 2>/dev/null
         systemctl start $SERVICE_NAME
         ;;
     start) 
         systemctl start $SERVICE_NAME 
         ;;
     stop) 
-        echo "Forcefully stopping $SERVICE_NAME..."
+        echo "Stopping $SERVICE_NAME..."
+        # First try a normal stop
+        systemctl stop $SERVICE_NAME
+        
+        # Wait for up to 1 second for graceful shutdown
+        sleep 1
+        
+        # Check if service stopped
+        if ! systemctl is-active --quiet $SERVICE_NAME; then
+            echo "Service stopped successfully."
+            exit 0
+        fi
+        
+        # Use force if needed after waiting
+        echo "Service still running, using force stop..."
         systemctl stop --force $SERVICE_NAME
-        # Use kill as a more aggressive stop if needed
+        sleep 1
+        
+        # As a last resort, use kill
         if systemctl is-active --quiet $SERVICE_NAME; then
-            echo "Service still running, using kill..."
+            echo "WARNING: Service still running, using kill command..."
             systemctl kill $SERVICE_NAME
         fi
         ;;
