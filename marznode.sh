@@ -30,6 +30,7 @@ check_and_update_go() {
     go_major=$(echo $go_version | cut -d. -f1)
     go_minor=$(echo $go_version | cut -d. -f2)
     
+    print_info "Current Go version: $go_version"
     # Check if Go version is less than 1.20
     if [ "$go_major" -lt 1 ] || ([ "$go_major" -eq 1 ] && [ "$go_minor" -lt 20 ]); then
       print_info "Current Go version $go_version is too old for sing-box. Minimum required is 1.20."
@@ -37,21 +38,56 @@ check_and_update_go() {
       
       # Download and install Go 1.24.2
       wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+      
+      # Remove old Go installation
+      print_info "Removing old Go installation..."
       sudo rm -rf /usr/local/go
+      
+      # Extract new Go
+      print_info "Installing new Go to /usr/local/go..."
       sudo tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz
       rm go1.24.2.linux-amd64.tar.gz
       
-      # Add to PATH for current session
-      export PATH=$PATH:/usr/local/go/bin
+      # Make sure /usr/local/go/bin is at the beginning of PATH
+      export PATH="/usr/local/go/bin:$PATH"
       
-      # Check if Go is in profile
-      if ! grep -q "/usr/local/go/bin" ~/.profile; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+      # Create a symbolic link to force the system to use the new Go version
+      print_info "Creating symlinks to ensure new Go version is used..."
+      if [ -d "/usr/bin" ]; then
+        sudo rm -f /usr/bin/go
+        sudo ln -sf /usr/local/go/bin/go /usr/bin/go
       fi
       
-      print_success "Go updated to version $(go version | awk '{print $3}')"
+      # Verify installation
+      if command -v go &> /dev/null; then
+        new_go_version=$(go version | awk '{print $3}' | sed 's/go//')
+        print_success "Go updated to version $new_go_version"
+        
+        # Make sure the updated version is actually being used
+        if [ "$new_go_version" = "$go_version" ]; then
+          print_error "Failed to update Go - still using old version. Will try alternative approach..."
+          
+          # Try using the full path to the new Go binary for building
+          export GO_BIN="/usr/local/go/bin/go"
+        else
+          export GO_BIN="go"
+        fi
+      else
+        print_error "Failed to install Go. Using fallback method..."
+        export GO_BIN="/usr/local/go/bin/go"
+      fi
+      
+      # Add to PATH permanently in both .profile and .bashrc
+      if ! grep -q "/usr/local/go/bin" ~/.profile; then
+        echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.profile
+      fi
+      
+      if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
+        echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.bashrc
+      fi
     else
       print_info "Go version $go_version is suitable for building sing-box."
+      export GO_BIN="go"
     fi
   else
     print_info "Go not found. Installing Go 1.24.2..."
@@ -61,14 +97,31 @@ check_and_update_go() {
     rm go1.24.2.linux-amd64.tar.gz
     
     # Add to PATH for current session
-    export PATH=$PATH:/usr/local/go/bin
+    export PATH="/usr/local/go/bin:$PATH"
     
-    # Check if Go is in profile
-    if ! grep -q "/usr/local/go/bin" ~/.profile; then
-      echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+    # Create symlink
+    if [ -d "/usr/bin" ]; then
+      sudo rm -f /usr/bin/go
+      sudo ln -sf /usr/local/go/bin/go /usr/bin/go
     fi
     
-    print_success "Go installed successfully: $(go version | awk '{print $3}')"
+    # Check if Go is in profile and add if not
+    if ! grep -q "/usr/local/go/bin" ~/.profile; then
+      echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.profile
+    fi
+    
+    if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
+      echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.bashrc
+    fi
+    
+    # Verify installation
+    if command -v go &> /dev/null; then
+      print_success "Go installed successfully: $(go version | awk '{print $3}')"
+      export GO_BIN="go"
+    else
+      print_error "Failed to install Go. Using fallback method..."
+      export GO_BIN="/usr/local/go/bin/go"
+    fi
   fi
 }
 
@@ -254,14 +307,45 @@ if [ ! -f "/opt/marznode/cores/sing-box/sing-box" ]; then
     wget -O sing.zip "https://github.com/SagerNet/sing-box/archive/refs/tags/v${sversion#v}.zip"
     unzip sing.zip
     cd ./sing-box-${sversion#v}
-    go build -v -trimpath -ldflags "-X github.com/sagernet/sing-box/constant.Version=${sversion#v} -s -w -buildid=" -tags with_gvisor,with_dhcp,with_wireguard,with_reality_server,with_clash_api,with_quic,with_utls,with_ech,with_v2ray_api,with_grpc ./cmd/sing-box
-    chmod +x ./sing-box
-    mv sing-box /opt/marznode/cores/sing-box/
+    
+    # Use the GO_BIN variable to ensure we're using the new Go installation
+    print_info "Building sing-box with $GO_BIN..."
+    $GO_BIN build -v -trimpath -ldflags "-X github.com/sagernet/sing-box/constant.Version=${sversion#v} -s -w -buildid=" -tags with_gvisor,with_dhcp,with_wireguard,with_reality_server,with_clash_api,with_quic,with_utls,with_ech,with_v2ray_api,with_grpc ./cmd/sing-box
+    
+    if [ -f "./sing-box" ]; then
+        chmod +x ./sing-box
+        mv sing-box /opt/marznode/cores/sing-box/
+        print_success "Success! sing-box built and installed successfully"
+    else
+        print_error "Failed to build sing-box. The binary was not created."
+        # Fallback to using a precompiled binary if available
+        print_info "Attempting to download a precompiled binary instead..."
+        
+        cd /opt/marznode/cores/sing-box
+        arch=$(x_architecture)
+        case "$arch" in
+            '64') arch='amd64' ;;
+            'arm64-v8a') arch='arm64' ;;
+            *) arch='amd64' ;; # Default to amd64 for other architectures
+        esac
+        
+        wget -O sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${sversion#v}/sing-box-${sversion#v}-linux-$arch.tar.gz"
+        tar -xzf sing-box.tar.gz
+        mv ./sing-box-${sversion#v}-linux-$arch/sing-box ./sing-box
+        chmod +x ./sing-box
+        rm -rf sing-box.tar.gz ./sing-box-${sversion#v}-linux-$arch
+        
+        if [ -f "./sing-box" ]; then
+            print_success "Successfully downloaded precompiled sing-box binary"
+        else
+            print_error "Failed to download precompiled sing-box binary"
+            exit 1
+        fi
+    fi
+    
     cd ..
     rm sing.zip
     rm -rf ./sing-box-${sversion#v}
-
-    print_success "Success! sing-box installed"
 else
     print_info "Sing-box core template already exists in shared directory."
 fi
