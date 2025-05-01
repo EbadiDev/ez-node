@@ -22,6 +22,56 @@ print_info() {
   echo -e "${CYAN}$1${NC}"
 }
 
+# Function to check and update Go version
+check_and_update_go() {
+  # Check current Go version
+  if command -v go &> /dev/null; then
+    go_version=$(go version | awk '{print $3}' | sed 's/go//')
+    go_major=$(echo $go_version | cut -d. -f1)
+    go_minor=$(echo $go_version | cut -d. -f2)
+    
+    # Check if Go version is less than 1.20
+    if [ "$go_major" -lt 1 ] || ([ "$go_major" -eq 1 ] && [ "$go_minor" -lt 20 ]); then
+      print_info "Current Go version $go_version is too old for sing-box. Minimum required is 1.20."
+      print_info "Installing Go 1.24.2..."
+      
+      # Download and install Go 1.24.2
+      wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+      sudo rm -rf /usr/local/go
+      sudo tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz
+      rm go1.24.2.linux-amd64.tar.gz
+      
+      # Add to PATH for current session
+      export PATH=$PATH:/usr/local/go/bin
+      
+      # Check if Go is in profile
+      if ! grep -q "/usr/local/go/bin" ~/.profile; then
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+      fi
+      
+      print_success "Go updated to version $(go version | awk '{print $3}')"
+    else
+      print_info "Go version $go_version is suitable for building sing-box."
+    fi
+  else
+    print_info "Go not found. Installing Go 1.24.2..."
+    wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz
+    rm go1.24.2.linux-amd64.tar.gz
+    
+    # Add to PATH for current session
+    export PATH=$PATH:/usr/local/go/bin
+    
+    # Check if Go is in profile
+    if ! grep -q "/usr/local/go/bin" ~/.profile; then
+      echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+    fi
+    
+    print_success "Go installed successfully: $(go version | awk '{print $3}')"
+  fi
+}
+
 # X architecture detection function
 x_architecture() {
   local arch
@@ -193,6 +243,9 @@ if [ ! -f "/opt/marznode/cores/sing-box/sing-box" ]; then
     read -r version
     latest=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
     sversion=${version:-$latest}
+
+    # Check and update Go version before building sing-box
+    check_and_update_go
 
     # Building sing-box
     cd /opt/marznode/cores/sing-box
