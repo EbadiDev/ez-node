@@ -471,7 +471,7 @@ print_info "Cloning marznode repository and setting up Python environment..."
 cd /opt/marznode/$node_directory
 
 # Clone to a node-specific directory to avoid any potential sharing issues
-git clone https://github.com/khodedawsh/marznode marznode-$node_directory
+git clone https://github.com/EbadiDev/marznode marznode-$node_directory
 cd marznode-$node_directory
 
 # Defining env path - placing ENV inside the node-specific marznode directory
